@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>REPTON 2 — Superior Software 1985 (BBC Micro)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{margin:0;padding:0;background:#0a0a14;color:#7a7a9a;font-family:monospace;height:100%;}
+  body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;}
+  #frame{padding:14px 18px;background:#16162a;border:2px solid #2c2c50;border-radius:10px;
+         box-shadow:0 0 40px #000 inset,0 0 30px rgba(0,0,0,.8);}
+  canvas{display:block;width:min(76.8vh,86vw);height:min(76.8vh,86vw);
+         image-rendering:pixelated;image-rendering:crisp-edges;background:#000;}
+  #cap{margin-top:10px;font-size:11px;letter-spacing:.12em;text-align:center;line-height:1.7;}
+  #cap b{color:#b8b8e0;}
+</style>
+</head>
+<body>
+<div id="frame"><canvas id="scr" width="768" height="768"></canvas></div>
+<div id="cap"><b>REPTON 2</b> · Superior Software 1985 · faithful BBC Micro remake<br>
+Arrows or Z/X + :// to move · SPACE status/continue · ESC give up · S/Q sound · D/W music</div>
+<script>
+"use strict";
+/*__REPTON_DATA__*/
+/* ============================================================================
+   REPTON 2 — reconstructed from the original 6502 disassembly (repton2.asm)
+   All level data, graphics, music, palettes, text and game rules are decoded
+   byte-for-byte from the ROM image. Object ids:
+
+   0,1 empty | 2 empty | 3-5 earth | 6 diamond | 7 key | 8 skull | 9 spirit/end
+   10 status trigger | 11 transporter | 12 cage | 13 safe | 14 rock | 15 egg
+   16-31 walls | 32+ puzzle pieces
+   ========================================================================== */
+
+const D = REPTON_DATA;
+function b64(s){ const b=atob(s); const a=new Uint8Array(b.length); for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i); return a; }
+const GFX=b64(D.gfx), TILEMAP=b64(D.tilemap), LEVELIDX=b64(D.levelidx),
+      LEVELSTRIPS=b64(D.levelstrips), TRANS0=b64(D.transporters), PUZZ0=b64(D.puzzle),
+      MUSIC2=b64(D.music2), MUSIC3=b64(D.music3), BANNER=b64(D.banner),
+      CURVEDNESS=b64(D.curvedness), SPRITESIZE=b64(D.spritesize),
+      SPRADDRLO=b64(D.spriteaddrlo), SPRADDRHI=b64(D.spriteaddrhi),
+      BOUNDARY=b64(D.boundary), LEVELPAL=b64(D.levelpal), COLMASKS=b64(D.colmasks),
+      ANIMLEFT=b64(D.animleft), ANIMRIGHT=b64(D.animright), ANIMDEATH=b64(D.animdeath),
+      DEATHOFF=b64(D.deathoff), ANIMBORED=b64(D.animbored), SPIRITANIM=b64(D.spiritanim),
+      SPIRITDXDY=b64(D.spiritdxdy), SPIRITSOLID=b64(D.spiritsolid), ADDPAL=b64(D.addpal),
+      STR_STATUS=b64(D.str_status), STR_CONGRATS=b64(D.str_congrats),
+      STR_ENDGAME=b64(D.str_endgame), STR_NAME=b64(D.str_name);
+const SPRADDR = []; for (let i=0;i<31;i++) SPRADDR[i] = (SPRADDRLO[i] | (SPRADDRHI[i]<<8)) - 0x2f40;
+const DX=[0,1,0,-1,0], DY=[-1,0,1,0,0]; // spirit dirs 0..3 (+halt 4)
+
+const OBJ={EMPTY:2,EARTH:3,DIAMOND:6,KEY:7,SKULL:8,SPIRIT:9,STATUS:10,TRANSPORTER:11,CAGE:12,SAFE:13,ROCK:14,EGG:15,WALL:16,PUZZLE:32};
+
+/* ---------------------------------------------------------------- graphics */
+
+// BBC MODE 5 screen memory: $6000-$7FFF. char row(0..31)*256 + char col(0..31)*8 + scanline
+const vram = new Uint8Array(0x2000);
+let textX=0, textY=0, textCol=0xff;
+
+function drawSubtileScreen(t,cx,cy){
+  if ((cx>>>0)>=32 || (cy>>>0)>=32) return;
+  const d=(cy<<8)|(cx<<3), s=t<<3;
+  for (let i=0;i<8;i++) vram[d+i]=GFX[s+i];
+}
+function drawMapSubtile(msx,msy){ // draw map subtile at map coords into the window
+  drawSubtileScreen(TILEMAP[(mapRead(msx>>2,msy>>2)<<4)+((msy&3)<<2)+(msx&3)], msx-G.tlx, msy-G.tly);
+}
+function drawSprite(spr,mx,my){
+  const sx=(mx-G.tlx)|0, sy=(my-G.tly)|0, size=SPRITESIZE[spr], addr=SPRADDR[spr];
+  for (let r=0;r<size;r++) for (let c=0;c<size;c++){
+    const cx=sx+c, cy=sy+r;
+    if ((cx>>>0)<32 && (cy>>>0)<32){
+      const d=(cy<<8)|(cx<<3), s=addr+r*0x140+c*8;
+      for (let i=0;i<8;i++) vram[d+i]|=GFX[s+i];
+    }
+  }
+}
+function printChar(c){
+  if (c<4){ textCol=COLMASKS[c]; return; }
+  if (c&0x80){ if ((c&0xc0)===0x80) textX=c&0x1f; else textY=c&0x1f; return; }
+  const d=(textY<<8)|(textX<<3), s=0x4c0+(c<<3);
+  for (let i=0;i<8;i++) vram[d+i]=GFX[s+i]&textCol;
+  textX=(textX+1)&0x1f; if (!textX) textY++;
+}
+function printString(bs){ for (let i=0;i<bs.length;i++){ if (bs[i]===0x0d) break; printChar(bs[i]); } }
+function printBanner(row){
+  let a=row<<8;
+  for (let i=0;i<160;i++){ drawSubtileScreen(BANNER[i],(a>>3)&31,a>>8); a+=8; }
+}
+function printBcd(lo,mid,hi,x,y){
+  textX=x; textY=y; let nonzero=false;
+  const digs=[hi>>4,hi&15,mid>>4,mid&15,lo>>4,lo&15];
+  for (let i=0;i<6;i++){
+    if (digs[i]===0 && !nonzero && i<5) continue;
+    nonzero=true; printChar(0x30+digs[i]);
+  }
+}
+function clearscreen(){ // VDU 12 + event off (disable_event)
+  vram.fill(0); G.eventOn=false; textCol=0xff; textX=0; textY=0;
+}
+
+/* palette: logical 0..3 -> BBC physical colour (MODE 5 default: black/red/yellow/white) */
+const BBCCOL=[[0,0,0],[255,0,0],[0,255,0],[255,255,0],[0,0,255],[255,0,255],[0,255,255],[255,255,255]];
+const pal=[0,1,3,7];
+function vdu19(v){ pal[v>>4]=v&0x0f; }
+function additionalPalette(){ G.bored=0; if (G.level<2) vdu19(ADDPAL[G.level]); }
+
+/* ---------------------------------------------------------------- audio */
+
+const AC = (typeof window!=="undefined") ? new (window.AudioContext||window.webkitAudioContext)() : null;
+let master=null;
+function initAudio(){
+  if (!AC || master) return;
+  master=AC.createGain(); master.gain.value=0.5; master.connect(AC.destination);
+}
+function bbcFreq(p){ return 122.0703125*Math.pow(2,p/48); } // BBC pitch byte -> Hz
+const chanCur=[null,null,null,null];
+function sound(chan,amp,pitch,dur){
+  if (!master) return;
+  const c=chan&0x0f;
+  const t=AC.currentTime+0.001, durS=dur*0.05;
+  if (chanCur[c]){ try{chanCur[c].g.gain.cancelScheduledValues(t); chanCur[c].g.gain.setValueAtTime(0,t); chanCur[c].o.stop(t+0.01);}catch(e){} chanCur[c]=null; }
+  if (pitch<=0 && dur<0) return;
+  const o=AC.createOscillator(); o.type="square"; o.frequency.value=bbcFreq(pitch);
+  const g=AC.createGain(); g.gain.value=0;
+  o.connect(g); g.connect(master);
+  const R=0.05; // ramp smoothing
+  if (amp&0x80){ // fixed volume: low nibble of signed byte, -15..-1
+    const v=Math.min(15,Math.max(1,-((amp<<24)>>24)))/15*0.9;
+    g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(v,t+0.005);
+    g.gain.setValueAtTime(v,t+Math.max(0.005,durS-R));
+    g.gain.linearRampToValueAtTime(0,t+durS+R);
+    o.start(t); o.stop(t+durS+R+0.02);
+  } else if (amp===2){ // envelope 2 (music): attack 64/126 in 10ms, sustain -1/10ms, release -2/10ms
+    const pk=64/126*0.9;
+    g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(pk,t+0.01);
+    g.gain.linearRampToValueAtTime(Math.max(0,pk-0.007*(durS*100-10)),t+durS);
+    g.gain.linearRampToValueAtTime(0,t+durS+0.16);
+    o.start(t); o.stop(t+durS+0.18);
+  } else { // envelope 1 (effects): attack +100/20ms to full, sustain, release -2/20ms
+    g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(0.9,t+0.025);
+    g.gain.setValueAtTime(0.9,t+Math.max(0.025,durS));
+    g.gain.linearRampToValueAtTime(0,t+durS+0.35);
+    o.start(t); o.stop(t+durS+0.37);
+  }
+  chanCur[c]={o,g};
+}
+function sfx(chan,amp,pitch,dur){ if (G.soundon) sound(chan,amp,pitch,dur); }
+function musicTick(){
+  if (!G.eventOn) return;
+  G.subnote=(G.subnote+1)&0xff;
+  if ((G.subnote&7)===0){
+    G.note=(G.note+1)&0x7f;
+    if (G.soundon && G.musicon){
+      const p2=MUSIC2[G.note], p3=MUSIC3[G.note];
+      if (p2) sound(0x12,2,p2,2);
+      if (p3) sound(0x13,2,p3,2);
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- game state */
+
+const ST={BOOT:0,STATUS:1,WIPE:2,PLAY:3,TPEFFECT:4,DEATH:5,DISSOLVE:6,RANDOMCLEAR:7,
+          ENDGAME:8,NAMEENTRY:9,CONGRATS:10};
+const G={
+  state:ST.BOOT, level:0, map:new Uint8Array(1024),
+  tlx:0,tly:0, rx:0,ry:0, animframe:0x13, movingX:0,movingY:0,
+  score:[0,0,0], lives:3, soundon:1, musicon:1, bored:0, l007e:0,
+  remMonsters:0x18, remDia:[0x34,0x16], remEarth:[0x44,0x47], remPuzz:0x42, remTrans:0x64,
+  spawnX:0x10, spawnY:7,
+  monsters:[{x:0,y:0,vx:0,vy:0,timer:0,alive:0},{x:0,y:0,vx:0,vy:0,timer:0,alive:0}],
+  spirits:[], meteors:[],
+  trans:new Uint8Array(TRANS0), puzz:new Uint8Array(PUZZ0),
+  savedL0:new Uint8Array(768),
+  seed:0x2c68,
+  // music
+  eventOn:false, subnote:0, note:0,
+  // sub-state
+  t:0, i:0, cb:null, deathOff:0x0f,
+  hi:[0x00,0x10,0x00], hiName:[], nameLen:0,
+};
+for (let i=0;i<8;i++){ G.spirits.push({x:0,y:0,dir:0,alive:0}); G.meteors.push({x:0xff,y:0xff}); }
+G.hiName = Array.from("Superior Software",c=>c.charCodeAt(0)).concat([0x0d]);
+
+function rand(){ G.seed=(G.seed*1103515245+12345)&0x7fffffff; return (G.seed>>16)&0xff; }
+
+/* BCD helpers (counters stay in the same BCD bytes as the original) */
+const b2i=b=>((b>>4)*10+(b&15)), i2b=v=>(((v/10|0)%10)<<4)|(v%10);
+function scoreAdd(v){
+  let n=b2i(G.score[0])+b2i(G.score[1])*100+b2i(G.score[2])*10000+v;
+  if (n>999999) n=999999;
+  G.score[0]=i2b(n%100); G.score[1]=i2b((n/100|0)%100); G.score[2]=i2b((n/10000|0)%100);
+}
+function bcdDec2(a){ let n=b2i(a[0])+b2i(a[1])*100-1; if(n<0)n=0; a[0]=i2b(n%100); a[1]=i2b(n/100|0); }
+function decrementEarth(){ bcdDec2(G.remEarth); }
+function decrementDia(){ bcdDec2(G.remDia); }
+function decrementMonsters(){ G.remMonsters=i2b(Math.max(0,b2i(G.remMonsters)-1)); }
+
+/* ---------------------------------------------------------------- map */
+
+function mapRead(x,y){
+  x&=63; y&=63;
+  if (x>=32) return BOUNDARY[G.level>>2];
+  if (y>=32){ if ((G.level&1) || y<48) return BOUNDARY[G.level>>2]; return 0; }
+  return G.map[(y<<5)|x];
+}
+function mapStoreObj(x,y,o){ if (x<32&&y<32&&x>=0&&y>=0) G.map[(y<<5)|x]=o; }
+
+function unpackLevel(lv){
+  for (let k=0;k<4;k++){
+    const si=LEVELIDX[lv*4+k];
+    if (si&0x80){ G.map.fill(si&0x7f, k*256, k*256+256); }
+    else {
+      const baseBit=si*256*5;
+      for (let o=0;o<256;o++){
+        let v=0;
+        for (let j=0;j<5;j++){
+          const bi=baseBit+o*5+j;
+          v|=((LEVELSTRIPS[bi>>3]>>(bi&7))&1)<<j;
+        }
+        G.map[k*256+o]=v;
+      }
+    }
+  }
+}
+function newLevel(){
+  if (G.level===0){ for (let i=0;i<768;i++) G.map[i]=G.savedL0[i]; G.map.fill(0,768,1024); }
+  else unpackLevel(G.level);
+}
+function initSpirits(){ // init_spirits: clear, scan spirits, place puzzle pieces + transporters
+  for (const s of G.spirits){ s.x=0;s.y=0;s.dir=0;s.alive=0; }
+  for (const m of G.monsters){ m.x=0;m.y=0;m.vx=0;m.vy=0;m.timer=0;m.alive=0; }
+  for (let y=0;y<32;y++) for (let x=0;x<32;x++){
+    if (G.map[(y<<5)|x]===OBJ.SPIRIT && G.level!==0){
+      G.map[(y<<5)|x]=OBJ.EMPTY; allocSpirit(x,y);
+    }
+  }
+  for (let i=0;i<42;i++){
+    const lv=G.puzz[i*4];
+    if (lv&0x80){ if (G.level===0){ const pos=G.puzz[i*4+3]; mapStoreObj((pos&0xf)+8,(pos>>4)+0x18,0x20+i); } }
+    else if ((lv&0x7f)===G.level){ mapStoreObj(G.puzz[i*4+1],G.puzz[i*4+2],0x20+i); }
+  }
+  for (let i=0;i<64;i++){
+    const t=i*6;
+    if (!(G.trans[t]&0x80) && (G.trans[t]&0x7f)===G.level) mapStoreObj(G.trans[t+1],G.trans[t+2],OBJ.TRANSPORTER);
+  }
+}
+function allocSpirit(cx,cy){
+  for (const s of G.spirits){
+    if (s.alive&0x80) continue;
+    s.x=cx*4; s.y=cy*4; s.alive=0x80; initSpiritDir(s); return;
+  }
+}
+function spiritBlockedAt(cx,cy){
+  const o=mapRead(cx,cy)&0x7f;
+  return o>=0x10 ? 1 : SPIRITSOLID[o];
+}
+function initSpiritDir(s){
+  const cx=s.x>>2, cy=s.y>>2;
+  const bl=[0,0,0,0];
+  for (let d=0;d<4;d++) bl[d]=spiritBlockedAt(cx+DX[d],cy+DY[d]);
+  let flag=false, dir=0;
+  for (let d=0;d<4;d++){
+    if (bl[d]) flag=true;
+    else if (flag){ dir=d; break; }
+  }
+  s.dir=dir;
+}
+
+/* ---------------------------------------------------------------- repton */
+
+const DEATH=Symbol("death");
+function die(){ throw DEATH; }
+
+function keyLeft(){ return keyHeld("ArrowLeft")||keyHeld("z")||keyHeld("Z"); }
+function keyRight(){ return keyHeld("ArrowRight")||keyHeld("x")||keyHeld("X"); }
+function keyUp(){ return keyHeld("ArrowUp")||keyHeld(":")||keyHeld("*"); }
+function keyDown(){ return keyHeld("ArrowDown")||keyHeld("/")||keyHeld("?"); }
+function keySpace(){ return keyHeld(" "); }
+function keyEscape(){ return keyHeld("Escape"); }
+
+function reptonMove(){
+  if (((G.tlx+2)&3)===0 && ((G.tly+2)&3)===0){
+    G.movingX=0; G.movingY=0;
+    const oU=mapRead(G.rx,G.ry-1), oD=mapRead(G.rx,G.ry+1);
+    if (keyUp() && G.ry!==0x3f && (oU>=0x20||oU<0x0c)) G.movingY++;
+    if (keyDown() && (oD>=0x20||oD<0x0c)) G.movingY--;
+    if (G.movingY===0){
+      const oLL=mapRead(G.rx-2,G.ry), oL=mapRead(G.rx-1,G.ry),
+            oR=mapRead(G.rx+1,G.ry), oRR=mapRead(G.rx+2,G.ry);
+      if (keyLeft()){
+        if (oL>=0x20||oL<0x0c) G.movingX++;
+        else if (oL>=OBJ.ROCK && oL<OBJ.WALL && oLL<3){ pushLeft(oL); G.movingX++; }
+      }
+      if (keyRight()){
+        if (oR>=0x20||oR<0x0c) G.movingX--;
+        else if (oR>=OBJ.ROCK && oR<OBJ.WALL && oRR<3){ pushRight(oR); G.movingX--; }
+      }
+    }
+  }
+  if (G.movingX>0){ G.animframe=ANIMLEFT[(G.tlx>>1)&7]; G.tlx--; }
+  else if (G.movingX<0){ G.animframe=ANIMRIGHT[(G.tlx>>1)&7]; G.tlx++; }
+  if (G.movingY>0){ G.animframe=((G.tly>>2)&1)+0x15; G.tly--; }
+  else if (G.movingY<0){ G.animframe=((G.tly>>2)&1)+0x15; G.tly++; }
+}
+function pushLeft(o){ mapStoreObj(G.rx-1,G.ry,OBJ.EMPTY); mapStoreObj(G.rx-2,G.ry,o); }
+function pushRight(o){ mapStoreObj(G.rx+1,G.ry,OBJ.EMPTY); mapStoreObj(G.rx+2,G.ry,o); }
+
+function reptonPostmove(){
+  G.rx=(G.tlx+14)>>2; G.ry=(G.tly+14)>>2;
+  const m1x=(G.tlx+17)>>2, m1y=(G.tly+14)>>2, m2x=(G.tlx+14)>>2, m2y=(G.tly+17)>>2;
+  mapMark(m1x,m1y,true); mapMark(m2x,m2y,true);
+  moveMonsters();
+  scanRocks();
+  updateSpirits();
+  updateMeteors();
+  mapMark(m1x,m1y,false); mapMark(m2x,m2y,false);
+  if (((G.tlx+2)&3)===0 && ((G.tly+2)&3)===0){
+    const o=mapRead(G.rx,G.ry);
+    if (o>=3 && o<0x0a) scoreAdd(o); // collect()
+    if (o===OBJ.DIAMOND) collectDiamond();
+    else if (o===OBJ.KEY) collectKey();
+    else if (o===OBJ.SKULL) die();
+    else if (o===OBJ.SPIRIT) checkVictory();
+    else if (o===OBJ.STATUS) statustrigger();
+    else if (o===OBJ.TRANSPORTER) enterTransporter();
+    else if (o>=0x20) collectPuzzlepiece();
+    else if (o>=3){ mapStoreObj(G.rx,G.ry,OBJ.EMPTY); decrementEarth(); }
+  }
+}
+function mapMark(x,y,on){
+  if (x<0||x>=32||y<0||y>=32) return;
+  const i=(y<<5)|x;
+  G.map[i]=on ? (G.map[i]|0x80) : (G.map[i]&0x7f);
+}
+function afterHitChecks(){
+  if (G.movingX===0 && G.movingY===0){
+    if (G.bored&0x80) G.animframe=ANIMBORED[(G.l007e>>4)&3];
+    else G.bored=(G.bored+1)&0xff;
+  } else G.bored=0;
+}
+
+/* ---------------------------------------------------------------- objects */
+
+function collectDiamond(){
+  mapStoreObj(G.rx,G.ry,OBJ.EMPTY);
+  sfx(1,1,0xc8,1);
+  decrementDia();
+}
+function collectKey(){
+  sfx(0x10,0xf8,0,3);
+  mapStoreObj(G.rx,G.ry,OBJ.EMPTY);
+  for (let y=0;y<32;y++) for (let x=0;x<32;x++)
+    if (mapRead(x,y)===OBJ.SAFE) mapStoreObj(x,y,OBJ.DIAMOND);
+}
+function collectPuzzlepiece(){
+  sfx(0x10,1,1,1);
+  for (let i=0;i<42;i++){
+    const lv=G.puzz[i*4];
+    if (lv&0x80 || (lv&0x7f)!==G.level) continue;
+    if (G.puzz[i*4+1]!==G.rx || G.puzz[i*4+2]!==G.ry) continue;
+    G.puzz[i*4]=G.level|0x80;
+    mapStoreObj(G.rx,G.ry,OBJ.EMPTY);
+    if (G.level===0){
+      const pos=G.puzz[i*4+3];
+      mapStoreObj((pos&0xf)+8,(pos>>4)+0x18,0x20+i);
+      sfx(0,1,0,4);
+    }
+    break;
+  }
+}
+function statustrigger(){
+  G.movingY=1; G.movingX=0;
+  startRandomClear(()=>{
+    enterStatusScreen(()=>{ G.tly--; reenterGame(()=>{G.state=ST.PLAY;}); });
+  });
+}
+function enterTransporter(){
+  mapStoreObj(G.rx,G.ry,OBJ.EMPTY);
+  if (G.level===0) for (let i=0;i<768;i++) G.savedL0[i]=G.map[i];
+  startTransporterEffect(()=>{
+    for (let i=0;i<64;i++){
+      const t=i*6;
+      if (G.trans[t]&0x80 || (G.trans[t]&0x7f)!==G.level) continue;
+      if (G.trans[t+1]!==G.rx || G.trans[t+2]!==G.ry) continue;
+      const destL=G.trans[t+3];
+      G.spawnX=G.trans[t+4]; G.spawnY=G.trans[t+5];
+      G.trans[t]|=0x80;
+      if (destL!==G.level){ G.level=destL; newLevel(); initSpirits(); }
+      afterTransporter();
+      return;
+    }
+    G.state=ST.PLAY; // no matching entry (cannot happen with ROM data)
+  });
+}
+function afterTransporter(){
+  vdu19(0x32); vdu19(LEVELPAL[G.level&3]); additionalPalette();
+  G.tlx=G.spawnX*4-14; G.tly=G.spawnY*4-14;
+  G.movingX=0; G.movingY=0;
+  reenterAfterSpawn();
+}
+function reenterAfterSpawn(){
+  reenterGame(()=>{ G.state=ST.PLAY; });
+  G.animframe=0x13;
+  G.rx=(G.tlx+14)>>2; G.ry=(G.tly+14)>>2;
+}
+function checkVictory(){
+  if ((G.remPuzz|G.remTrans)!==0) return;
+  for (let i=0;i<256;i++) G.map[i]=0;
+  G.tlx=0; G.tly=0;
+  startTransporterEffect(()=>{
+    reenterGame(()=>{
+      startTransporterEffect(()=>{
+        startDissolve(()=>{
+          printBanner(1); printBanner(26);
+          textX=7; textY=7;
+          printString(STR_CONGRATS);
+          G.state=ST.CONGRATS;
+        });
+      });
+    });
+  });
+}
+
+/* monsters */
+function moveMonsters(){
+  for (const m of G.monsters){
+    if (!(m.alive&0x80)) continue;
+    if (!(m.timer&0x80)){ m.timer=(m.timer+2)&0xff; continue; }
+    moveMonster(m);
+    checkMonsterRockDeath(m);
+    if (!(m.alive&0x80)) continue;
+    const dxs=(m.x-G.tlx)&0xff, dys=(m.y-G.tly)&0xff;
+    if (dxs>=0x0b && dxs<0x12 && dys>=0x0b && dys<0x12) die();
+  }
+}
+function moveMonster(m){
+  if ((m.x&3)===0 && (m.y&3)===0){
+    const cx=m.x>>2, cy=m.y>>2;
+    const up=mapRead(cx,cy-1)&0x7f, rt=mapRead(cx+1,cy)&0x7f,
+          dn=mapRead(cx,cy+1)&0x7f, lf=mapRead(cx-1,cy)&0x7f;
+    m.vx=0; m.vy=0;
+    const updown=()=>{
+      if (cy<G.ry){ if (dn<6) m.vy=1; }
+      else { if (up<6) m.vy=-1; }
+    };
+    if (rand()&0x80){
+      if (cx<G.rx){ if (rt<6) m.vx=1; else updown(); }
+      else { if (lf<6) m.vx=-1; else updown(); }
+    } else updown();
+  }
+  m.x=(m.x+m.vx)&0xff; m.y=(m.y+m.vy)&0xff;
+}
+function checkMonsterRockDeath(m){
+  const cx1=(m.x+3)>>2, cy1=m.y>>2, cx2=m.x>>2, cy2=(m.y+3)>>2;
+  const o1=mapRead(cx1,cy1), o2=mapRead(cx2,cy2);
+  if (o1===OBJ.ROCK||o1===OBJ.EGG||o2===OBJ.ROCK||o2===OBJ.EGG){
+    m.alive=0; sfx(0x10,1,5,1); decrementMonsters();
+  }
+}
+function spawnMonster(cx,cy){
+  mapStoreObj(cx,cy,OBJ.EMPTY);
+  for (const m of G.monsters){
+    if (m.alive&0x80) continue;
+    m.x=cx*4; m.y=cy*4; m.vx=0; m.vy=0; m.timer=0; m.alive=0x80;
+    sfx(0x10,0xf1,2,3);
+    return;
+  }
+}
+
+/* rocks & eggs */
+function scanRocks(){
+  for (let y=30;y>=0;y--) for (let x=31;x>=0;x--){
+    const o=G.map[(y<<5)|x];
+    if (o>=OBJ.ROCK && o<OBJ.WALL) rockMove(x,y,o);
+  }
+}
+function rockMove(x,y,o){
+  const i=(y<<5)|x;
+  const W=G.map[i-1], E=G.map[i+1], SW=G.map[i+31], S=G.map[i+32], SE=G.map[i+33];
+  if (S<3){
+    mapStoreObj(x,y,OBJ.EMPTY); mapStoreObj(x,y+1,o);
+    rockMoved(x,y,o, i+64<1024?G.map[i+64]:0, x);
+    return;
+  }
+  if (S>=0x1c) return;
+  const cv=CURVEDNESS[S];
+  if (cv===1) return;
+  if (cv!==2 && W<3 && SW<3 && x!==0){ // roll left (stays on row, silent)
+    mapStoreObj(x,y,OBJ.EMPTY); mapStoreObj(x-1,y,o);
+    return;
+  }
+  if (cv!==0 && E<3 && SE<3 && x!==31){ // roll right-down
+    mapStoreObj(x,y,OBJ.EMPTY); mapStoreObj(x+1,y+1,o);
+    rockMoved(x,y,o, i+65<1024?G.map[i+65]:0, x+1);
+  }
+}
+function rockMoved(x,y,o,thinghit,thinghitX){
+  if (y!==0x1e){
+    sfx(0x10,0xf8,4,3);
+    if (thinghit&0x80) die();
+  }
+  if (o===OBJ.EGG && thinghit>=3) spawnMonster(thinghitX,y+1);
+}
+
+/* spirits */
+function updateSpirits(){
+  for (const s of G.spirits){
+    if (!(s.alive&0x80)) continue;
+    const dxs=(s.x-G.tlx)&0xff, dys=(s.y-G.tly)&0xff;
+    if (dxs>=0x0c && dxs<0x12 && dys>=0x0c && dys<0x12) die();
+    s.x=(s.x+DX[s.dir])&0xff; s.y=(s.y+DY[s.dir])&0xff;
+    if ((s.x&3)===0 && (s.y&3)===0){
+      const cx=s.x>>2, cy=s.y>>2;
+      if (mapRead(cx,cy)===OBJ.CAGE){
+        mapStoreObj(cx,cy,OBJ.DIAMOND);
+        sfx(1,1,0x64,1);
+        s.alive=0;
+      } else spiritUpdateDirection(s,cx,cy);
+    }
+  }
+}
+function spiritUpdateDirection(s,cx,cy){
+  const bl=[0,0,0,0];
+  for (let d=0;d<4;d++) bl[d]=spiritBlockedAt(cx+DX[d],cy+DY[d]);
+  if (bl[0]&bl[1]&bl[2]&bl[3]){ s.dir=4; return; }
+  const left=(s.dir-1)&3;
+  if (!bl[left]){ s.dir=left; return; }
+  let d=s.dir;
+  for (;;){
+    const blocked = d===4 ? true : bl[d]; // dir 4 reads a nonzero zp byte in the original
+    if (!blocked) break;
+    d=(d+1)&3;
+  }
+  s.dir=d;
+}
+
+/* meteors */
+function updateMeteors(){
+  if (G.level>=0x0c || (G.level&1)) return;
+  for (const m of G.meteors){
+    if (m.x&0x80) spawnMeteor(m);
+    m.y=(m.y+1)&0xff;
+    if (m.y===0xff) spawnMeteor(m);
+    const dxs=(m.x-G.tlx)&0xff, dys=(m.y-G.tly)&0xff;
+    if (dxs>=0x0d && dxs<0x12 && dys>=0x0e && dys<0x12) die();
+  }
+}
+function spawnMeteor(m){
+  m.y=(0xe5+(rand()&7))&0xff;
+  do { m.x=((rand()&0x3f)-0x10+G.tlx)&0xff; } while (m.x>=0x7f);
+}
+
+/* ---------------------------------------------------------------- flows */
+
+function musicStart(){ G.note=0; G.eventOn=true; }
+function reenterGame(cb){ musicStart(); startWipe(cb); }
+
+function startWipe(cb){ G.state=ST.WIPE; G.i=0; G.cb=cb; }
+function tickWipe(){
+  // redraw_from_centre: expanding square of map subtiles, 16 iterations (~3 frames on the Beeb)
+  for (let n=0;n<4 && G.i<16;n++,G.i++){
+    const k=G.i;
+    const x1=G.tlx+15-k, x2=G.tlx+16+k, y1=G.tly+15-k, y2=G.tly+16+k;
+    for (let x=x1;x<=x2;x++){ drawMapSubtile(x,y1); drawMapSubtile(x,y2); }
+    for (let y=y1;y<=y2;y++){ drawMapSubtile(x1,y); drawMapSubtile(x2,y); }
+  }
+  if (G.i>=16) G.cb();
+}
+function startTransporterEffect(cb){ G.state=ST.TPEFFECT; G.i=0; G.cb=cb; }
+function tickTPEffect(){
+  for (let n=0;n<2 && G.i<16;n++,G.i++){
+    const k=G.i;
+    sfx(0x11,1,k*2,2);
+    const x1=G.tlx+15-k, x2=G.tlx+16+k, y1=G.tly+15-k, y2=G.tly+16+k;
+    for (let x=x1;x<=x2;x++){ drawSubtileScreen(9,x-G.tlx,y1-G.tly); drawSubtileScreen(0x0e,x-G.tlx,y2-G.tly); }
+    for (let y=y1;y<=y2;y++){ drawSubtileScreen(0x0b,x1-G.tlx,y-G.tly); drawSubtileScreen(0x0c,x2-G.tlx,y-G.tly); }
+    drawSubtileScreen(8,x1-G.tlx,y1-G.tly); drawSubtileScreen(0x0d,x1-G.tlx,y2-G.tly);
+    drawSubtileScreen(0x0a,x2-G.tlx,y1-G.tly); drawSubtileScreen(0x0f,x2-G.tlx,y2-G.tly);
+  }
+  if (G.i>=16) G.cb();
+}
+function startDissolve(cb){ G.state=ST.DISSOLVE; G.i=0; G.cb=cb; }
+function tickDissolve(){
+  for (let a=0;a<0x2000;a+=2){ vram[a]=(vram[a]<<1)&0xff; vram[a+1]>>=1; }
+  G.i++;
+  if (G.i>=8){ clearscreen(); G.cb(); }
+}
+function startRandomClear(cb){ G.state=ST.RANDOMCLEAR; G.i=0; G.t=0; G.cb=cb; }
+function tickRandomClear(){
+  if ((G.t=(G.t+1)%3)===0){ // ~0.85s like the CPU-bound original
+    for (let a=0;a<0x2000;a++) vram[a]&=rand();
+    G.i++;
+  }
+  if (G.i>=14) G.cb();
+}
+function startDeath(){ G.state=ST.DEATH; G.i=0; G.t=0; }
+function tickDeath(){
+  if (G.i<12){
+    if (G.t===0){ G.animframe=ANIMDEATH[G.i]; G.deathOff=DEATHOFF[G.i]; sfx(0x10,0xf1+G.i,6,8); }
+    if (++G.t>=4){ G.t=0; G.i++; }
+  } else {
+    if (++G.t>31){
+      for (let a=0;a<1024;a++) G.map[a]&=0x7f;
+      G.lives--;
+      startDissolve(()=>{ if (G.lives===0) endOfGame(); else spawnRepton(); });
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- screens */
+
+function enterStatusScreen(cb){
+  G.state=ST.STATUS; G.cb=cb;
+  printBanner(1);
+  textX=5; textY=7;
+  printString(STR_STATUS);
+  printBcd(G.score[0],G.score[1],G.score[2],15,11);
+  printBcd(G.lives,0,0,15,13);
+  printBcd(G.remEarth[0],G.remEarth[1],0,15,21);
+  printBcd(G.remDia[0],G.remDia[1],0,15,23);
+  printBcd(G.remMonsters,0,0,15,25);
+  // count remaining transporters & puzzle pieces (status_screen)
+  let nt=0x64;
+  for (let i=0;i<64;i++) if (G.trans[i*6]&0x80) nt=(b2i(nt)-1+100)%100, nt=i2b(nt);
+  let np=0x42;
+  for (let i=0;i<42;i++) if (G.puzz[i*4]&0x80) np=(b2i(np)-1+100)%100, np=i2b(np);
+  printBcd(nt,0,0,15,17); G.remTrans=nt;
+  printBcd(np,0,0,15,19); G.remPuzz=np;
+}
+function tickStatus(){
+  textX=15; textY=15; // print_sound_state
+  if (G.soundon){ printChar(0x4f); printChar(0x4e); printChar(0x20); }
+  else { printChar(0x4f); printChar(0x46); printChar(0x46); }
+  audioKeys();
+  if (keyEscape()){ startDissolve(()=>endOfGame()); return; }
+  if (keySpace()){
+    updateSkulls();
+    G.cb();
+  }
+}
+function updateSkulls(){
+  if (G.level!==0) return;
+  if (G.remMonsters===0){ G.map[0x21]=0; G.map[0xa1]=0; }
+  if ((G.remDia[0]|G.remDia[1])===0){ G.map[0x23]=0; G.map[0xa3]=0; }
+  if ((G.remEarth[0]|G.remEarth[1])===0){ G.map[0x25]=0; G.map[0xa5]=0; }
+  if (G.remTrans===0){ G.map[0x29]=0; G.map[0xa9]=0; }
+  if (G.remPuzz===0){ G.map[0x27]=0; G.map[0xa7]=0; }
+}
+function endOfGame(){
+  printBanner(4);
+  // score > highscore ?
+  const s=G.score, h=G.hi;
+  const gt=(s[2]>h[2])||(s[2]===h[2]&&s[1]>h[1])||(s[2]===h[2]&&s[1]===h[1]&&s[0]>h[0]);
+  if (gt){
+    G.hi=[s[0],s[1],s[2]];
+    G.state=ST.NAMEENTRY; G.nameLen=0; G.hiName=[];
+    textX=0; textY=0; textCol=0xff;
+    printString(STR_NAME);
+    return;
+  }
+  showEndScreen();
+}
+function showEndScreen(){
+  G.state=ST.ENDGAME;
+  printString(STR_ENDGAME);
+  printBcd(G.score[0],G.score[1],G.score[2],12,13);
+  printBcd(G.hi[0],G.hi[1],G.hi[2],11,19);
+  textCol=0x0f; textX=6; textY=23;
+  printString(G.hiName);
+}
+function tickEndgame(){
+  audioKeys();
+  if (keySpace()) startDissolve(()=>newgame1());
+}
+function tickNameEntry(){ /* handled by key events */ }
+function nameEntryKey(ch){
+  if (ch===0x0d){ // return: pad with $0d and finish
+    while (G.hiName.length<20) G.hiName.push(0x0d);
+    startDissolve(()=>endOfGame());
+    return;
+  }
+  if (ch===0x7f){
+    if (G.nameLen>0){
+      G.nameLen--; G.hiName.length--;
+      textX--; printChar(0x20); textX--;
+    }
+    return;
+  }
+  if (ch<0x20 || G.nameLen>=19) return;
+  G.hiName.push(ch); G.nameLen++;
+  printChar(ch);
+}
+
+function spawnRepton(){
+  vdu19(0x32); vdu19(LEVELPAL[G.level&3]); additionalPalette();
+  G.tlx=G.spawnX*4-14; G.tly=G.spawnY*4-14;
+  G.movingX=0; G.movingY=0;
+  enterStatusScreen(()=>reenterAfterSpawn());
+}
+function newgame1(){
+  G.level=0; G.score=[0,0,0];
+  newgame2();
+}
+function newgame2(){
+  G.lives=3;
+  for (const m of G.meteors){ m.x=0xff; m.y=0xff; }
+  G.remMonsters=0x18; G.remDia=[0x34,0x16]; G.remEarth=[0x44,0x47];
+  for (let i=0;i<64;i++) G.trans[i*6]&=0x7f;
+  for (let i=0;i<42;i++) G.puzz[i*4]&=0x7f;
+  for (const s of G.spirits) s.alive=0;
+  for (const m of G.monsters) m.alive=0;
+  G.spawnX=0x10; G.spawnY=7;
+  unpackLevel(0); initSpirits();
+  spawnRepton();
+}
+
+/* ---------------------------------------------------------------- main loop */
+
+const keys=new Set();         // currently held
+const latch=new Map();        // key -> ms timestamp until which a tap still counts
+function keyHeld(k){ return keys.has(k) || (latch.get(k)||0) > performance.now(); }
+function audioKeys(){
+  if (keys.has("d")||keys.has("D")) G.musicon=1;
+  if (keys.has("w")||keys.has("W")) G.musicon=0;
+  if (keys.has("q")||keys.has("Q")) G.soundon=0;
+  if (keys.has("s")||keys.has("S")) G.soundon=1;
+}
+
+function tickPlay(){
+  try {
+    reptonMove();
+    reptonPostmove();
+  } catch(e){
+    if (e===DEATH){ startDeath(); return; }
+    throw e;
+  }
+  afterHitChecks();
+  audioKeys();
+  if (keyEscape()){ startDeath(); return; }
+  G.l007e=(G.l007e+1)&0xff;
+}
+
+function tick(){
+  musicTick();
+  switch (G.state){
+    case ST.PLAY: tickPlay(); break;
+    case ST.WIPE: tickWipe(); break;
+    case ST.TPEFFECT: tickTPEffect(); break;
+    case ST.DEATH: tickDeath(); break;
+    case ST.DISSOLVE: tickDissolve(); break;
+    case ST.RANDOMCLEAR: tickRandomClear(); break;
+    case ST.STATUS: tickStatus(); break;
+    case ST.ENDGAME: tickEndgame(); break;
+    case ST.NAMEENTRY: tickNameEntry(); break;
+    case ST.CONGRATS: if (keySpace()) startDissolve(()=>newgame2()); break;
+  }
+  render();
+}
+
+/* ---------------------------------------------------------------- render */
+
+let cv,ctx,small,sctx,img,palL;
+function render(){
+  if (!ctx) return;
+  const st=G.state;
+  if (st===ST.PLAY || st===ST.DEATH){
+    // map pass
+    for (let cy=0;cy<32;cy++) for (let cx=0;cx<32;cx++){
+      const msx=G.tlx+cx, msy=G.tly+cy;
+      drawSubtileScreen(TILEMAP[(mapRead(msx>>2,msy>>2)<<4)+((msy&3)<<2)+(msx&3)],cx,cy);
+    }
+    // monsters
+    for (const m of G.monsters){
+      if (!(m.alive&0x80)) continue;
+      if (m.timer&0x80) drawSprite(0x10+((G.l007e>>2)&1),m.x,m.y);
+      else if (m.timer>=0x40) drawSprite(0x0f,m.x,m.y);
+      else drawSprite(0x09,m.x,m.y);
+    }
+    // spirits
+    for (const s of G.spirits)
+      if (s.alive&0x80) drawSprite(SPIRITANIM[G.l007e&7],s.x+1,s.y+1);
+    // meteors
+    if (G.level<0x0c && !(G.level&1))
+      for (const m of G.meteors) drawSprite(0x0e,m.x,m.y);
+    // repton (or death anim)
+    if (st===ST.DEATH){
+      if (G.i<12) drawSprite(G.animframe,G.tlx+G.deathOff,G.tly+G.deathOff);
+    } else drawSprite(G.animframe,G.tlx+14,G.tly+14);
+  }
+  // unpack vram -> canvas
+  const d=img.data;
+  for (let row=0;row<32;row++) for (let col=0;col<32;col++){
+    let addr=(row<<8)|(col<<3);
+    for (let sl=0;sl<8;sl++,addr++){
+      const b=vram[addr];
+      for (let p=0;p<4;p++){
+        const px=((b>>(3-p))&1)|(((b>>(7-p))&1)<<1);
+        img32[(((row<<3)+sl)*128+(col<<2)+p)]=palL[px];
+      }
+    }
+  }
+  sctx.putImageData(img,0,0);
+  ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(small,0,0,cv.width,cv.height);
+}
+let img32;
+if (typeof document!=="undefined"){
+  cv=document.getElementById("scr");
+  ctx=cv.getContext("2d");
+  small=document.createElement("canvas"); small.width=128; small.height=256;
+  sctx=small.getContext("2d");
+  img=sctx.createImageData(128,256);
+  img32=new Uint32Array(img.data.buffer);
+  palL=new Uint32Array(4);
+  function refreshPal(){
+    for (let i=0;i<4;i++){
+      const c=BBCCOL[pal[i]];
+      palL[i]=(255<<24)|(c[2]<<16)|(c[1]<<8)|c[0];
+    }
+  }
+  refreshPal();
+  const _vdu19=vdu19;
+  vdu19=function(v){ _vdu19(v); refreshPal(); };
+}
+
+/* ---------------------------------------------------------------- input */
+
+if (typeof window!=="undefined"){
+  window.addEventListener("keydown",e=>{
+    initAudio();
+    if (AC && AC.state==="suspended") AC.resume();
+    const k=e.key;
+    if (G.state===ST.NAMEENTRY){
+      if (k==="Enter") nameEntryKey(0x0d);
+      else if (k==="Backspace"||k==="Delete") nameEntryKey(0x7f);
+      else if (k.length===1){ const c=k.charCodeAt(0); if (c>=0x20&&c<0x7f) nameEntryKey(c); }
+      e.preventDefault();
+      return;
+    }
+    keys.add(k);
+    latch.set(k, performance.now()+90);
+    if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"," "].includes(k)) e.preventDefault();
+  });
+  window.addEventListener("keyup",e=>keys.delete(e.key));
+  window.addEventListener("blur",()=>keys.clear());
+
+  /* 50Hz game loop (PAL vsync) */
+  let last=0,acc=0;
+  function frame(ts){
+    if (!last) last=ts;
+    acc+=ts-last; last=ts;
+    let n=0;
+    while (acc>=20 && n<5){ acc-=20; n++; tick(); }
+    if (acc>100) acc=0;
+    requestAnimationFrame(frame);
+  }
+  /* boot: start1 (CLS) -> start2 (envelope, sound on) -> newgame1 */
+  vram.fill(0);
+  G.soundon=1;
+  newgame1();
+  requestAnimationFrame(frame);
+}
+
+/* node smoke-test exports (no DOM) */
+if (typeof module!=="undefined" && typeof window==="undefined"){
+  module.exports={G,ST,keys,newgame1,tick,mapRead,unpackLevel,vram,drawSprite,
+    reptonMove,scanRocks,spawnMonster,moveMonsters,updateSpirits,enterTransporter,
+    collectDiamond,collectKey,sound:(c,a,p,d)=>{}};
+}
+</script>
+</body>
+</html>

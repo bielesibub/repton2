@@ -1,0 +1,5 @@
+.DS_Store
+__pycache__/
+*.pyc
+tiles.ppm
+node_modules/
