@@ -40,6 +40,8 @@ All 16 interconnected screens (A–P) of the original, with its full feature set
 The source of truth is [`repton2.asm`](repton2.asm), a py8dis-style disassembly of the
 game binary taken from **[gfoot/repton2disassembly](https://github.com/gfoot/repton2disassembly)**.
 
+The [`repton2.asm`](repton2.asm) was passed to[Kimi K3](https://platform.kimi.ai/) using [opencode CLI](https://opencode.ai/) 
+
 `build.py` parses the disassembly into a 64K memory image using the `// addr:` comment
 tags, slices out the data tables, verifies them against the ROM's own counters
 (earth = 4744, diamonds + safes + cages = 1634, eggs = 18), and injects everything into
