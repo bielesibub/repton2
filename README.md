@@ -1,3 +1,4 @@
+![Repton 2](https://img.shields.io/badge/BBC%20Micro-Repton%202-blue)
 # Repton 2 — faithful single-page HTML remake
 
 A faithful browser port of **Superior Software's Repton 2** (BBC Micro, 1985), built
@@ -5,9 +6,9 @@ A faithful browser port of **Superior Software's Repton 2** (BBC Micro, 1985), b
 decoded byte-for-byte from the original game data. No ROM dumps, no hand-drawn assets,
 no approximations: the game you get is the game that shipped in 1985.
 
-**Play:** open `repton.html` in any modern browser. It's one fully self-contained file.
+**[▶ Play](https://html-preview.github.io/?url=https://github.com/bielesibub/repton2/main/repton.html)** in any modern browser. It's one fully self-contained file.
 
-![Repton 2](https://img.shields.io/badge/BBC%20Micro-Repton%202-blue)
+
 
 ## The game
 
