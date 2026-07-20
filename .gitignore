@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 tiles.ppm
 node_modules/
+*.asm
