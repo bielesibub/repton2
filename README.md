@@ -36,6 +36,12 @@ All 16 interconnected screens (A–P) of the original, with its full feature set
 | `S` / `Q` | Sound on / off |
 | `D` / `W` | Music on / off |
 
+On touch devices a glass overlay appears automatically: D-pad (bottom-left, hold or slide),
+**A** = SPACE, **B** = ESC, plus SOUND/MUSIC/ENTER chips. Force it on/off with `?touchpad=1`
+/ `?touchpad=0`. It's a standalone module ([touchpad.js](touchpad.js)) you can drop into any
+keyboard-driven game. If `touchpad.js` isn't reachable (e.g. some preview proxies), the game
+still runs — keyboard controls only.
+
 ## How it's built
 
 The source of truth is [`repton2.asm`](repton2.asm), a py8dis-style disassembly of the
@@ -65,8 +71,9 @@ per frame.
 
 | File | Purpose |
 | --- | --- |
-| `repton.html` | The game — fully self-contained single page |
+| `repton.html` | The game — self-contained single page (loads `touchpad.js` if present) |
 | `repton-template.html` | Game source (HTML/JS) with the data marker |
+| `touchpad.js` | Modular touch overlay (D-pad + buttons), loaded via `<script src>` |
 | `build.py` | Regenerates `repton.html` from the disassembly |
 | `repton2.asm` | The disassembly (source of truth, read-only) |
 | `completion.md` | Project log (attempts, decisions, bug history) |

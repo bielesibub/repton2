@@ -1,40 +1,7 @@
-# v1.0 - Repton 2 BBC bitecode to javascript - Kimi K3
+# v1.0 - Repton 2 BBC disassembly to single-page HTML - Kimi K3
+Repton 2 built exclusively from [repton2disassembly in github](https://github.com/gfoot/repton2disassembly) copied here `repton2.asm` (py8dis-style disassembly of D.REPB). 
 
-An attempt to build a Javascript Repton from bitecode using Kimi K3
-
-## Initial Prompt
-
-using only the file @repton2.asm from [repton2disassembly in github](https://github.com/gfoot/repton2disassembly) build a single page html version of this bbc classic, include maps, graphics - with animation, sound and music. create as faithfully as you can.
-
-## Completion Output
-
-Done! repton.html (79 KB, fully self-contained single page) is now open in your browser. It was built entirely from the disassembly data in this repo.
-What was built
-Data decoded straight from the original 6502 sources:
-- All 12 maps (A–L) — decoded from the 5-bit-per-object bitstream in repton-maps.asm using the exact algorithm from fn_get_next_map_object (verified: "TIM TYLER" on D, the skull on E, spiral on H, "REPTON" on L)
-- All graphics — every tile decoded from repton-sprites.asm with authentic BBC MODE 5 2bpp interleaving (pixel-perfect match against repton-sprites.png), plus per-screen palettes (A=red, B=blue, C=magenta … L=cyan)
-- Music — the full 3-channel in-game tune (256 steps at the original 160 ms timer rate) and the start-screen intro, from repton-main-music.asm / repton-music-intro-notes.asm
-Faithful game logic (from repton2-commented.asm):
-- Rocks/eggs fall one cell per loop, roll off rocks/diamonds/eggs (with the original's asymmetric left/right roll), crush Repton via the $FF map-marker trick, and eggs crack → hatch → chase you through dug tunnels only (original random-direction AI, including the STY/LDY bug quirk in the crush check)
-- Rock pushing, earth/diamond/key pickups (50/1 points), key converts all safes to diamonds, 6000-unit timer with white screen-flash + beeps when low, "Out of time.", 4 lives, explosion death sequence, dissolve transitions, idle animation, walking/standing sprite cycles
-- Loading splash, status screen (Enter), M for the mini-map (screens A–H only, "mean!"), level passwords (P — try Chameleon), game-over and "REPTON HAS BEEN FINISHED" screens
-- Sound effects: diamond ding, rock drop (volume by row), death crunch, monster crush — square-wave Web Audio with BBC channel cut-through
-Controls: Arrows (or Z/X/:/​/) to move · Enter = status · Esc = give up · M = map · S/Q sound · D/W music · R restart · Space = play
-build.py + repton-template.html are included so you can regenerate repton.html after any tweak. Enjoy the game!
-
-## Other..
-
-Single page HTML BBC Repton remake
-Context
-310,428 tokens
-30% used
-$12.58 spent
-
----
-
-# v2.0 - Repton 2 BBC disassembly to single-page HTML - Kimi K3
-
-Second attempt, built exclusively from `repton2.asm` (py8dis-style disassembly of D.REPB).
+Created purely by [Kimi K3](https://platform.kimi.ai/) and [opencode CLI](https://opencode.ai/) 
 
 ## Completion Output
 
@@ -110,3 +77,36 @@ re-verified pixel-faithful vs the original on levels A/B + status screen.
 
 Status: repton.html is complete and colour-correct; full test suite (node bot + headless
 Chrome) passes.
+
+# Cost
+
+New session - 2026-07-19T15:18:08.830Z
+Context
+419,683 tokens
+40% used
+$15.49 spent
+
+---
+
+# v2.2 - Touch overlay for mobile play - Kimi K3
+
+Added `touchpad.js`, a modular touch overlay (no dependencies, ~350 lines) for playing on
+phones/tablets. It dispatches **synthetic KeyboardEvents**, so the game engine is untouched —
+any game that reads keys from window/document can adopt it with one script tag + an init call.
+- Glass-style D-pad (hold + slide between directions, dead zone, optional 8-way), A/B hold
+  buttons, toggle chips (SOUND/MUSIC send the on/off key pair s/q, d/w), all configurable.
+- Shows itself only on touch devices (`pointer: coarse` / touch points); `?touchpad=1|0`
+  forces on/off. Haptics via navigator.vibrate where supported.
+- build.py originally inlined it into repton.html via a `/*__TOUCHPAD__*/` marker; switched
+  to a plain `<script src="touchpad.js">` import for ease of access (edit the overlay without
+  rebuilding). The init is guarded (`if (window.TouchPad)`) so the game still runs keyboard-
+  only if the file is missing. GOTCHA if you ever inline it instead: the JS must not contain
+  a literal `</script>` — an early version had one in a doc comment and Chrome killed the
+  whole script block.
+- Template CSS: on coarse pointers with body.tp-on, the caption hides and the canvas centres
+  in the space above the dock (portrait) or shrinks to leave corner room (landscape).
+
+Verified with headless Chrome device emulation (iPhone viewport, CDP touch events): overlay
+appears, A tap leaves the status screen into PLAY, holding the right wedge drives Repton
+rx 16 -> 19, keys clear on release, no JS errors. Screenshots: portrait/landscape/hold.
+Note: high-score NAMEENTRY still needs a real keyboard for letters (ENTER chip accepts).

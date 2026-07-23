@@ -250,6 +250,8 @@ data_js = "const REPTON_DATA=" + json.dumps({k: b64(v) for k, v in S.items()}) +
 with open(TEMPLATE, "r", encoding="utf-8") as f:
     tpl = f.read()
 assert "/*__REPTON_DATA__*/" in tpl
+tpl = tpl.replace("/*__REPTON_DATA__*/", data_js, 1)
+
 with open(OUT, "w", encoding="utf-8") as f:
-    f.write(tpl.replace("/*__REPTON_DATA__*/", data_js, 1))
+    f.write(tpl)
 print(f"wrote {OUT}")

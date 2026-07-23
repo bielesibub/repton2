@@ -13,6 +13,16 @@
          image-rendering:pixelated;image-rendering:crisp-edges;background:#000;}
   #cap{margin-top:10px;font-size:11px;letter-spacing:.12em;text-align:center;line-height:1.7;}
   #cap b{color:#b8b8e0;}
+  /* touch overlay active (body.tp-on is set by touchpad.js): leave room for the dock */
+  @media (pointer:coarse){
+    body.tp-on{justify-content:center;padding-bottom:200px;}
+    body.tp-on canvas{width:min(66vh,86vw);height:min(66vh,86vw);}
+    body.tp-on #cap{display:none;}
+  }
+  @media (pointer:coarse) and (orientation:landscape){
+    body.tp-on{justify-content:center;padding-top:0;}
+    body.tp-on canvas{width:min(84vh,56vw);height:min(84vh,56vw);}
+  }
 </style>
 </head>
 <body>
@@ -31,8 +41,6 @@ const REPTON_DATA={"gfx": "AAACAg0HAQ8ICgoNDg0OCAAAAAIBBwEPAAgKBAoMCwwAAAAAAQIBB
    0,1 empty | 2 empty | 3-5 earth | 6 diamond | 7 key | 8 skull | 9 spirit/end
    10 status trigger | 11 transporter | 12 cage | 13 safe | 14 rock | 15 egg
    16-31 walls | 32+ puzzle pieces
-
-   Original repo - https://github.com/bielesibub/repton2
    ========================================================================== */
 
 const D = REPTON_DATA;
@@ -874,6 +882,23 @@ if (typeof module!=="undefined" && typeof window==="undefined"){
     reptonMove,scanRocks,spawnMonster,moveMonsters,updateSpirits,enterTransporter,
     collectDiamond,collectKey,sound:(c,a,p,d)=>{}};
 }
+</script>
+<script src="touchpad.js"></script>
+<script>
+/* Touch overlay for mobile play. Modular: touchpad.js + this init works
+   in any keyboard-driven game. If the file is missing the game runs fine
+   without it (keyboard only). */
+if (window.TouchPad) TouchPad.init({
+  buttons:[
+    {label:'B', key:'Escape'},           /* give up (lose a life) — left, staggered */
+    {label:'A', key:' ', accent:true},   /* status / continue — right, under the thumb */
+  ],
+  chips:[
+    {label:'SOUND', on:'s', off:'q', initial:true},
+    {label:'MUSIC', on:'d', off:'w', initial:true},
+    {label:'ENTER', key:'Enter'},        /* high-score name entry */
+  ],
+});
 </script>
 </body>
 </html>

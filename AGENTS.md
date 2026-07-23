@@ -11,6 +11,11 @@ No other ROM/graphics sources are used.
 - `repton-template.html` — game source (HTML/JS). Contains a `/*__REPTON_DATA__*/` marker.
 - `build.py` — regenerates `repton.html`: parses the asm into a 64K memory image using
   the `// addr:` comment tags, slices out the data tables, verifies decodes, injects.
+- `touchpad.js` — modular touch overlay (D-pad + buttons, synthetic KeyboardEvents),
+  loaded by repton.html via `<script src="touchpad.js">` (game works fine without it).
+  Auto-shows on touch devices; force with `?touchpad=1|0`. Drop-in reusable for other
+  keyboard-driven games. If you ever inline it into HTML instead, it must not contain
+  a literal `</script>`.
 - `completion.md` — project log (attempts, decisions, bug history).
 
 ## Build / regenerate
